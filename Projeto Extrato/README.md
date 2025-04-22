@@ -29,3 +29,24 @@ Este projeto automatiza a extração de dados tabulares de arquivos PDF e os con
 - `src/`: Código fonte do projeto
 - `tests/`: Testes unitários
 - `main.py`: Script principal para rodar o projeto
+
+- extrator-pdf-csv/
+│
+├── extrator/                  # Pacote principal
+│   ├── __init__.py            # Torna a pasta um pacote Python
+│   ├── extrator.py            # Código principal de extração
+│   └── utils.py               # Funções auxiliares (opcional)
+│
+├── input/                     # PDFs de entrada
+│   └── data/                  # Subpasta com arquivos PDF
+│
+├── output/                    # CSVs gerados
+│
+├── tests/                     # Testes automatizados
+│   └── test_extrator.py       # Testes com pytest
+│
+├── README.md                  # Descrição do projeto
+├── requirements.txt           # Dependências do projeto
+├── .gitignore                 # Arquivos/pastas ignoradas pelo Git
+└── main.py                    # Script para execução principal
+
