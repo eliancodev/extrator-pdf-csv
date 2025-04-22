@@ -1,0 +1,194 @@
+config.py
+"""
+Este módulo contém as configurações do projeto, como os caminhos de entrada e saída.
+"""
+
+from pathlib import Path
+from loguru import logger
+
+# Caminhos de entrada e saída
+INPUT_DIR = Path("input")
+OUTPUT_DIR = Path("output")
+
+# Configuração do log
+logger.add("logs/debug.log", rotation="500 KB", retention="7 days", level="DEBUG")
+
+
+
+------------------------------------------------------------------------------------
+
+extrator.py
+
+"""
+Este módulo contém funções para extrair tabelas de arquivos PDF.
+"""
+
+from pathlib import Path
+import pdfplumber
+from loguru import logger
+
+def extrair_tabelas(pasta_entrada: Path) -> list:
+    """
+    Extrai tabelas de todos os arquivos PDF em uma pasta.
+
+    Args:
+        pasta_entrada (Path): Caminho para a pasta contendo os arquivos PDF.
+
+    Returns:
+        list: Lista de tabelas extraídas de cada página dos PDFs.
+    """
+    tabelas_extraidas = []
+
+    for pdf_file in pasta_entrada.glob("*.pdf"):
+        logger.info(f"Lendo arquivo: {pdf_file.name}")
+        try:
+            with pdfplumber.open(pdf_file) as pdf:
+                for pagina in pdf.pages:
+                    # Ajuste de estratégias de extração
+                    tabelas = pagina.extract_tables({
+                        "vertical_strategy": "lines",
+                        "horizontal_strategy": "lines",
+                        "intersection_tolerance": 5,
+                    })
+                    if tabelas:
+                        logger.info(f"Tabelas encontradas {pagina.page_number}")
+                        for tabela in tabelas:
+                            logger.debug(f"Tabela extraída {pagina.page_number}: {tabela}")
+                            tabelas_extraidas.append(tabela)
+                    else:
+                        logger.warning(f"Nenhuma tabela encontrada {pagina.page_number}")
+        except FileNotFoundError as e:
+            logger.error(f"Arquivo não encontrado: {e}")
+        except OSError as e:
+            logger.error(f"Erro ao processar o arquivo {pdf_file.name}: {e}")
+
+    return tabelas_extraidas
+
+
+----------------------------------------------------------------------------------------------------------
+
+processador.py
+"""
+Módulo de processamento de textos ou tabelas extraídos de arquivos PDF.
+"""
+
+from typing import Any, List
+import pandas as pd
+from loguru import logger
+
+
+def limpar_valor(valor: str) -> float:
+    """
+    Limpa e converte um valor monetário para float.
+
+    Args:
+        valor (str): Valor monetário como string.
+
+    Returns:
+        float: Valor convertido.
+    """
+    try:
+        # Remove "R$", espaços e substitui vírgula por ponto
+        valor = valor.replace("R$", "").replace(",", ".").strip()
+        # Remove o sinal de negativo, se presente
+        if valor.startswith("-"):
+            return -float(valor[1:])
+        return float(valor)
+    except ValueError as exc:
+        raise ValueError(f"Não foi possível converter o valor: {valor}") from exc
+
+
+def processar_tabelas(tabelas: List[List[List[str]]]) -> pd.DataFrame:
+    """
+    Processa listas de tabelas em DataFrame com colunas formatadas.
+
+    Args:
+        tabelas (List[List[List[str]]]): Tabelas extraídas.
+
+    Returns:
+        pd.DataFrame: Dados estruturados com colunas nomeadas.
+    """
+    dados_formatados: List[List[Any]] = []
+
+    for tabela in tabelas:
+        for linha in tabela:
+            if not linha or len(linha) < 5:
+                logger.debug(f"Linha ignorada por formato inválido: {linha}")
+                continue
+
+            linha = [col.strip() if col else "" for col in linha]
+
+            try:
+                # Remove quebras de linha na coluna de data
+                data = linha[0].replace("\n", " ")
+                detalhes = linha[1]
+                valor = limpar_valor(linha[2])
+                saldo = limpar_valor(linha[3]) if linha[3] != "-" else None
+                saldo_sacavel = limpar_valor(linha[4]) if linha[4] != "-" else None
+
+                dados_formatados.append([data, detalhes, valor, saldo, saldo_sacavel])
+            except (ValueError, IndexError) as err:
+                logger.debug(f"Linha ignorada por erro de formato: {linha} | Erro: {err}")
+                continue
+
+    colunas = ["Data", "Detalhes", "Valor", "Saldo", "Saldo_Sacavel"]
+    df = pd.DataFrame(dados_formatados, columns=colunas)
+    logger.info(f"Total de linhas processadas: {len(df)}")
+    return df
+
+
+
+----------------------------------------------------------------------------------------------------------
+
+main.py 
+
+"""
+Script principal: extração e processamento de dados de PDFs para CSV.
+"""
+
+from pathlib import Path
+import pandas as pd
+from loguru import logger
+from src.extrator import extrair_tabelas
+from src.processador import processar_tabelas
+from src.config import INPUT_DIR, OUTPUT_DIR
+
+RESULTADO_CSV = "transacoes_formatadas.csv"
+
+def salvar_csv(dataframe: pd.DataFrame, caminho_saida: Path) -> None:
+    """
+    Salva um DataFrame como CSV.
+
+    Args:
+        dataframe (pd.DataFrame): Dados estruturados.
+        caminho_saida (Path): Caminho completo do arquivo CSV.
+    """
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    dataframe.to_csv(caminho_saida, index=False, encoding="utf-8-sig", sep=";")
+    logger.success(f"Arquivo CSV salvo em: {caminho_saida}")
+
+def main() -> None:
+    """
+    Executa o fluxo principal:
+    - Extrai tabelas
+    - Processa dados
+    - Salva em CSV
+    """
+    logger.info("Iniciando extração de tabelas...")
+    tabelas = extrair_tabelas(INPUT_DIR)
+
+    if not tabelas:
+        logger.warning("Nenhuma tabela foi extraída dos PDFs.")
+        return
+
+    logger.info("Processando as tabelas extraídas...")
+    df_tabelas = processar_tabelas(tabelas)
+
+    if df_tabelas.empty:
+        logger.warning("O DataFrame está vazio após o processamento.")
+        return
+
+    salvar_csv(df_tabelas, OUTPUT_DIR / RESULTADO_CSV)
+
+if __name__ == "__main__":
+    main()
